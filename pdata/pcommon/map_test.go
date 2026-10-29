@@ -4,6 +4,7 @@
 package pcommon
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,6 +83,9 @@ func TestMapReadOnly(t *testing.T) {
 	assert.Panics(t, func() { m.PutEmptyMap("k2") })
 	assert.Panics(t, func() { m.PutEmptySlice("k2") })
 	assert.Panics(t, func() { m.Remove("k1") })
+	assert.Panics(t, func() { m.RenameKey("k1", "k2") })
+	assert.Panics(t, func() { m.RenameKey("k1", "k1") })
+	assert.Panics(t, func() { m.RenameKey("missing", "new") })
 	assert.Panics(t, func() { m.RemoveIf(func(string, Value) bool { return true }) })
 	assert.Panics(t, func() { m.EnsureCapacity(2) })
 
@@ -92,6 +96,80 @@ func TestMapReadOnly(t *testing.T) {
 
 	assert.Equal(t, map[string]any{"k1": "v1"}, m.AsRaw())
 	assert.Panics(t, func() { _ = m.FromRaw(map[string]any{"k1": "v1"}) })
+}
+
+func TestMapRenameKey(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		oldKey      string
+		newKey      string
+		wantRenamed bool
+		wantKeys    []string
+	}{
+		{"first", "first", "renamed", true, []string{"renamed", "middle", "last", ""}},
+		{"middle", "middle", "renamed", true, []string{"first", "renamed", "last", ""}},
+		{"last", "last", "renamed", true, []string{"first", "middle", "renamed", ""}},
+		{"missing", "missing", "renamed", false, []string{"first", "middle", "last", ""}},
+		{"collision_before", "last", "first", false, []string{"first", "middle", "last", ""}},
+		{"collision_after", "first", "last", false, []string{"first", "middle", "last", ""}},
+		{"same_key", "middle", "middle", true, []string{"first", "middle", "last", ""}},
+		{"same_missing_key", "missing", "missing", false, []string{"first", "middle", "last", ""}},
+		{"empty_source", "", "renamed", true, []string{"first", "middle", "last", "renamed"}},
+		{"empty_destination_collision", "first", "", false, []string{"first", "middle", "last", ""}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMap()
+			m.PutStr("first", "value")
+			m.PutEmptyMap("middle").PutEmptySlice("nested").AppendEmpty().SetInt(42)
+			m.PutEmptyBytes("last").FromRaw([]byte{1, 2, 3})
+			m.PutEmpty("")
+			before := m.AsRaw()
+			require.Equal(t, tt.wantRenamed, m.RenameKey(tt.oldKey, tt.newKey))
+			keys := make([]string, 0, m.Len())
+			for key := range m.All() {
+				keys = append(keys, key)
+			}
+			assert.Equal(t, tt.wantKeys, keys)
+			if tt.wantRenamed {
+				value := before[tt.oldKey]
+				delete(before, tt.oldKey)
+				before[tt.newKey] = value
+			}
+			assert.Equal(t, before, m.AsRaw())
+		})
+	}
+}
+
+func TestMapRenameKeyPreservesValueReference(t *testing.T) {
+	m := NewMap()
+	m.PutStr("old", "value")
+	value, ok := m.Get("old")
+	require.True(t, ok)
+	require.True(t, m.RenameKey("old", ""))
+	value.SetStr("updated")
+	renamed, ok := m.Get("")
+	require.True(t, ok)
+	assert.Equal(t, "updated", renamed.Str())
+	_, ok = m.Get("old")
+	assert.False(t, ok)
+}
+
+func BenchmarkMapRenameKey(b *testing.B) {
+	for _, size := range []int{8, 32, 128} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			m := NewMap()
+			for i := range size {
+				m.PutInt(fmt.Sprintf("key_%d", i), int64(i))
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if !m.RenameKey("key_0", "renamed") || !m.RenameKey("renamed", "key_0") {
+					b.Fatal("rename failed")
+				}
+			}
+			b.ReportMetric(2, "renames/op")
+		})
+	}
 }
 
 func TestMapPutEmpty(t *testing.T) {
