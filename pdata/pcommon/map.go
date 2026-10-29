@@ -72,6 +72,28 @@ func (m Map) Get(key string) (Value, bool) {
 	return newValue(nil, m.getState()), false
 }
 
+// RenameKey renames oldKey to newKey without changing the value or entry order.
+// It returns false without modifying the map if oldKey is absent or a different
+// entry already has newKey. Renaming a key to itself returns true if it exists.
+func (m Map) RenameKey(oldKey, newKey string) bool {
+	m.getState().AssertMutable()
+	entries := *m.getOrig()
+	source := -1
+	for i := range entries {
+		if entries[i].Key == oldKey {
+			source = i
+		}
+		if oldKey != newKey && entries[i].Key == newKey {
+			return false
+		}
+	}
+	if source < 0 {
+		return false
+	}
+	entries[source].Key = newKey
+	return true
+}
+
 // Remove removes the entry associated with the key and returns true if the key
 // was present in the map, otherwise returns false. Removing an entry
 // invalidates any Value previously returned by Get from this Map.
