@@ -1,0 +1,5 @@
+change_type: enhancement
+component: pdata
+note: Reduce repeated attribute lookup overhead in pcommon.Map.Get without changing lookup semantics.
+issues: []
+change_logs: [user, api]
